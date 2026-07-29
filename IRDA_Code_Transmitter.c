@@ -46,9 +46,26 @@ __attribute__((always_inline)) static inline void IR_TX_Set_Timer_ARR (uint32_t 
 
 static void IR_TX_Start_Frame (void)	// Запуск нового кадра (стартовый импульс)
 {
-	IR_TX_OUT_Pin_ON;		// Включение выхода
+	IR_TX_OUT_Pin_ON;			// Включение выхода
 	IR_TX_Set_Timer_ARR (NEC_LEAD_PULSE);
-	IR_Trsmt_Data.mode = 1; // Переход на: Стартовый импульс
+	IR_Trsmt_Data.mode = 1; 	// Переход на: Стартовый импульс
+}
+
+static void IR_TX_Stop_Frame (void)	// Остановка кадра (пауза между кодами)
+{
+	IR_TX_OUT_Pin_OFF;			// Выключение выхода
+	IR_Trsmt_Data.repeat_timer = IR_REPEAT_INTERVAL_MS - 1;		// Устанавливаем таймер паузы
+	IR_TX_Set_Timer_ARR (1000);	// Превращаем ведущий таймер в таймер милисекунд
+	IR_Trsmt_Data.mode = 6;		// Переход на: Пауза между кодами
+	TIM_RESET (IRDA_TIMER);		// Начальный сброс таймера
+}
+
+static void IR_TX_Stop_Code (void)	// Остановка генерации кода
+{
+	TIM_STOP (IRDA_TIMER);
+	IR_TX_OUT_Pin_OFF;
+	IR_Trsmt_Data.mode = 0;
+	IR_Trsmt_Data.repeat_en = false;
 }
 
 
@@ -90,9 +107,17 @@ void IR_Transmitter_Init (void)	// Инициализация и настрой�
 	__NVIC_EnableIRQ (TIM_IRQn (IRDA_TIMER));
 }
 
-void IR_Transmitter_Start (uint32_t address, uint32_t command, bool repeat_en, uint8_t repeat_cnt)	// Отправка кода NEC
+bool IR_Transmitter_Start (uint32_t address, uint32_t command, bool repeat_en, uint8_t repeat_cnt)	// Отправка кода NEC
 {
-	if (IR_Trsmt_Data.mode) IR_Transmitter_Stop ();	// Останавливаем прежнюю передачу, если была запущена
+	/* repeat_cnt не имеет значения в режиме без повторов (repeat_en = false)
+	 * repeat_cnt = 0 - бесконечный повтор до принудительной остановки */
+
+	// Проверка предыдущей отправки:
+	if (IR_Trsmt_Data.mode)
+	{
+		IR_Transmitter_Stop ();	// Останавливаем её
+		return false;			// А пока новый код запускать рано
+	}
 
 	// Начальные установки генерации кода:
 	IR_Trsmt_Data.tx_code = 	// Формирование 32-битного кода NEC
@@ -102,22 +127,24 @@ void IR_Transmitter_Start (uint32_t address, uint32_t command, bool repeat_en, u
 		((address & 0xFF) << 24) | (((~address) & 0xFF) << 16) | ((command & 0xFF) << 8) | ((~command) & 0xFF);
 #endif
 	IR_Trsmt_Data.repeat_en = repeat_en;
-	IR_Trsmt_Data.repeat_cnt = repeat_cnt;
-	IR_Trsmt_Data.bit_cnt = 32;				// 32 бита данных
+	IR_Trsmt_Data.repeat_cnt = repeat_en ? repeat_cnt : 0;	// Устанавливаем счётчик повторов, только если повторы разрешены
+	IR_Trsmt_Data.bit_cnt = 32;	// 32 бита данных кода
 
 	TIM_RESET (IRDA_TIMER);		// Начальный сброс таймера
 
 	IR_TX_Start_Frame ();		// Запуск первого кадра
 
 	TIM_RUN (IRDA_TIMER);		// Запуск таймера
+
+	return true;	// Запустили код успешно
 }
 
 void IR_Transmitter_Stop (void)	// Остановка генерации кода
 {
-	TIM_STOP (IRDA_TIMER);
-	IR_TX_OUT_Pin_OFF;
-	IR_Trsmt_Data.mode = 0;
-	IR_Trsmt_Data.repeat_en = false;
+	IR_Trsmt_Data.repeat_en = false;	// Повторы отменяются
+
+	if (IR_Trsmt_Data.mode != 6) IR_TX_Stop_Frame ();	// Останавливаем только если не идёт уже пауза после кода
+	else IR_TX_OUT_Pin_OFF;		// Выключение выхода железобетонно
 }
 
 void IR_Transmitter_Timer_IRQHandler (void)	// Обработчик прерываний таймера IRDA_TIMER
@@ -127,28 +154,31 @@ void IR_Transmitter_Timer_IRQHandler (void)	// Обработчик прерыв
 	{
 	case 1:	// Стартовый импульс (9 мс) закончился:
 		IR_TX_OUT_Pin_OFF;		// Выключение выхода
-		IR_TX_Set_Timer_ARR ((IR_Trsmt_Data.repeat_en && (IR_Trsmt_Data.bit_cnt == 0)) ? NEC_REPEAT_SPACE : NEC_LEAD_SPACE);
+		IR_TX_Set_Timer_ARR ((IR_Trsmt_Data.bit_cnt) ? NEC_LEAD_SPACE : NEC_REPEAT_SPACE);
 		IR_Trsmt_Data.mode = 2;	// Переход на: Стартовая пауза
 		break;
+
 	case 2:	// Стартовая пауза закончилась:
 		IR_TX_OUT_Pin_ON;		// Включение выхода
 		IR_TX_Set_Timer_ARR (NEC_BIT_PULSE);
-		IR_Trsmt_Data.mode = 3;	// Переход на: Импульс бита
+		IR_Trsmt_Data.mode = (IR_Trsmt_Data.bit_cnt) ? 3 : 5;	// Переход на: Импульс бита при генерации кода / Стоп-импульс при повторе
 		break;
+
 	case 3:	// Импульс бита закончился:
 		IR_TX_OUT_Pin_OFF;		// Выключение выхода
-		bool act_bit = (IR_Trsmt_Data.tx_code >> IR_Trsmt_Data.bit_cnt) & 1;	// Читаем текущий бит
+		IR_Trsmt_Data.bit_cnt --;	// Отсчёт битов
+		bool act_bit = (IR_Trsmt_Data.tx_code >> IR_Trsmt_Data.bit_cnt) & 1;	// Читаем текущий бит (LSB first)
 		IR_TX_Set_Timer_ARR (act_bit ? NEC_BIT_ONE_SPACE : NEC_BIT_ZERO_SPACE);
 		IR_Trsmt_Data.mode = 4;	// Переход на: Пауза между битами
 		break;
+
 	case 4:	// Пауза между битами закончилась:
 		IR_TX_OUT_Pin_ON;		// Включение выхода
-		IR_Trsmt_Data.bit_cnt --;	// Отсчёт битов
 		// Передача всех битов продолжается:
-		if (IR_Trsmt_Data.bit_cnt > 0)
+		if (IR_Trsmt_Data.bit_cnt)
 		{
 			IR_TX_Set_Timer_ARR (NEC_BIT_PULSE);
-			IR_Trsmt_Data.mode = 3;	// Переход на: Импульс бита (0.56 мс carrier)
+			IR_Trsmt_Data.mode = 3;	// Переход на: Импульс бита
 		}
 		// Все биты переданы:
 		else
@@ -157,30 +187,30 @@ void IR_Transmitter_Timer_IRQHandler (void)	// Обработчик прерыв
 			IR_Trsmt_Data.mode = 5; // Переход на: Стоп-импульс
 		}
 		break;
-	case 5:	// Стоп-импульс:
-		IR_TX_OUT_Pin_OFF;			// Выключение выхода
-		IR_Trsmt_Data.repeat_timer = IR_REPEAT_INTERVAL_MS - 1;		// Устанавливаем таймер паузы
-		IR_TX_Set_Timer_ARR (1000);	// Превращаем ведущий таймер в таймер милисекунд
-		IR_Trsmt_Data.mode = 6;		// Переход на: Пауза между кодами
-		TIM_RESET (IRDA_TIMER);		// Начальный сброс таймера
+
+	case 5:	// Стоп-импульс закончился:
+		IR_TX_Stop_Frame ();	// Остановка кадра (пауза между кодами)
 		break;
-	case 6:	// Пауза после кода закончилась:
-		if (IR_Trsmt_Data.repeat_timer) IR_Trsmt_Data.repeat_timer --;	// Отсчет таймера автоповтора
-		// Отправление повтора и переключение на стартовый импульс:
+
+	case 6:	// Пауза между кодами (миллисекундный счётчик):
+		if (IR_Trsmt_Data.repeat_timer) IR_Trsmt_Data.repeat_timer --;	// Отсчет таймера большой паузы
+		// Пауза после кода закончилась. Отправление повтора и переключение на стартовый импульс:
 		else if (IR_Trsmt_Data.repeat_en)
 		{
 			if (IR_Trsmt_Data.repeat_cnt)
 			{
 				IR_Trsmt_Data.repeat_cnt --;
-				if (IR_Trsmt_Data.repeat_cnt) IR_TX_Start_Frame ();	// Запуск нового кадра (стартовый импульс)
-				else IR_Transmitter_Stop ();	// Повторы закончились, остановка генерации кода
+				if (IR_Trsmt_Data.repeat_cnt)
+					IR_TX_Start_Frame ();	// Запуск нового кадра (стартовый импульс)
+				else IR_TX_Stop_Code ();	// Повторы закончились, остановка генерации кода
 			}
 			// Бесконечная отправка повторов:
 			else IR_TX_Start_Frame ();	// Запуск нового кадра (стартовый импульс)
 		}
-		else IR_Transmitter_Stop ();	// Одиночный код закончен
+		else IR_TX_Stop_Code ();	// Одиночный код закончен
 		break;
-	default: IR_Transmitter_Stop ();	// Невпопад, остановка генерации кода
+
+	default: IR_TX_Stop_Code ();	// Невпопад, остановка генерации кода
 	}
 
 	TIM_IRQ_UPD_CLEAR (IRDA_TIMER);	// Сброс флага прерывания по переполнению

@@ -89,7 +89,7 @@ extern IR_Trsmt_Data_Struct IR_Trsmt_Data;	// Подключение общей 
 /*** Набор функций драйвера *****************************************************************************************************************/
 
 void IR_Transmitter_Init (void);				// Инициализация и настройка вывода и таймера для ИК-передатчика
-void IR_Transmitter_Start (uint32_t address, uint32_t command, bool repeat_en, uint8_t repeat_cnt);	// Отправка кода NEC
+bool IR_Transmitter_Start (uint32_t address, uint32_t command, bool repeat_en, uint8_t repeat_cnt);	// Отправка кода NEC
 void IR_Transmitter_Stop (void);				// Остановка генерации кода
 void IR_Transmitter_Timer_IRQHandler (void);	// Обработчик прерываний таймера IRDA_TIMER
 
