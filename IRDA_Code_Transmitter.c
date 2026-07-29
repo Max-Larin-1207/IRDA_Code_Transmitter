@@ -143,8 +143,9 @@ void IR_Transmitter_Stop (void)	// Остановка генерации код�
 {
 	IR_Trsmt_Data.repeat_en = false;	// Повторы отменяются
 
-	if (IR_Trsmt_Data.mode != 6) IR_TX_Stop_Frame ();	// Останавливаем только если не идёт уже пауза после кода
-	else IR_TX_OUT_Pin_OFF;		// Выключение выхода железобетонно
+	// Во время паузы после кода - ничего не делаем и паузу не сбиваем, логика сама завершит паузу, просто держим выход выключенным:
+	if (IR_Trsmt_Data.mode == 6) IR_TX_OUT_Pin_OFF;
+	else if (IR_Trsmt_Data.mode) IR_TX_Stop_Frame ();	// В остальных случаях - останавливаем код и переходим на паузу между кодами
 }
 
 void IR_Transmitter_Timer_IRQHandler (void)	// Обработчик прерываний таймера IRDA_TIMER
