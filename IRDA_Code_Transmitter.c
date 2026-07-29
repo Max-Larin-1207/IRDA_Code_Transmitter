@@ -15,11 +15,11 @@
 
 // Установки дополнительных макросов портов для макросов управления пинами МК:
 #if IR_TRASMIT_OUT_POLAR_MODE
-// Для инвертированного режима выхода (прямое подключение):
+// Для инвертированного режима выхода:
 #define IR_TX_OUT_Pin_ON	RESET_PORT_PIN (IR_TX_OUT_GPIO_Port, IR_TX_OUT_Pin)
 #define IR_TX_OUT_Pin_OFF	SET_1_PORT_PIN (IR_TX_OUT_GPIO_Port, IR_TX_OUT_Pin)
 #else
-// Для выхода на ИК-светодидод:
+// Для прямого режима выхода:
 #define	IR_TX_OUT_Pin_ON	SET_1_PORT_PIN (IR_TX_OUT_GPIO_Port, IR_TX_OUT_Pin)
 #define IR_TX_OUT_Pin_OFF	RESET_PORT_PIN (IR_TX_OUT_GPIO_Port, IR_TX_OUT_Pin)
 #endif
@@ -44,7 +44,7 @@ __attribute__((always_inline)) static inline void IR_TX_Set_Timer_ARR (uint32_t 
 	TIMER (IRDA_TIMER)->ARR = duration_us - 1;
 }
 
-static void IR_TX_Set_Lead_Pulse (void)	// Начало генерации кода, установка стартового импульса (9 мс carrier)
+static void IR_TX_Start_Frame (void)	// Запуск нового кадра (стартовый импульс)
 {
 	IR_TX_OUT_Pin_ON;		// Включение выхода
 	IR_TX_Set_Timer_ARR (NEC_LEAD_PULSE);
@@ -107,7 +107,7 @@ void IR_Transmitter_Start (uint32_t address, uint32_t command, bool repeat_en, u
 
 	TIM_RESET (IRDA_TIMER);		// Начальный сброс таймера
 
-	IR_TX_Set_Lead_Pulse ();	// Начало генерации кода, установка стартового импульса (9 мс carrier)
+	IR_TX_Start_Frame ();		// Запуск первого кадра
 
 	TIM_RUN (IRDA_TIMER);		// Запуск таймера
 }
@@ -125,23 +125,23 @@ void IR_Transmitter_Timer_IRQHandler (void)	// Обработчик прерыв
 	// Переход из предыдущих режимов в новый:
 	switch (IR_Trsmt_Data.mode)
 	{
-	case 1:	// Стартовый импульс:
+	case 1:	// Стартовый импульс (9 мс) закончился:
 		IR_TX_OUT_Pin_OFF;		// Выключение выхода
-		IR_TX_Set_Timer_ARR (IR_Trsmt_Data.repeat_en && (IR_Trsmt_Data.bit_cnt == 0) ? NEC_REPEAT_SPACE : NEC_LEAD_SPACE);
+		IR_TX_Set_Timer_ARR ((IR_Trsmt_Data.repeat_en && (IR_Trsmt_Data.bit_cnt == 0)) ? NEC_REPEAT_SPACE : NEC_LEAD_SPACE);
 		IR_Trsmt_Data.mode = 2;	// Переход на: Стартовая пауза
 		break;
-	case 2:	// Стартовая пауза:
+	case 2:	// Стартовая пауза закончилась:
 		IR_TX_OUT_Pin_ON;		// Включение выхода
 		IR_TX_Set_Timer_ARR (NEC_BIT_PULSE);
 		IR_Trsmt_Data.mode = 3;	// Переход на: Импульс бита
 		break;
-	case 3:	// Импульс бита:
+	case 3:	// Импульс бита закончился:
 		IR_TX_OUT_Pin_OFF;		// Выключение выхода
 		bool act_bit = (IR_Trsmt_Data.tx_code >> IR_Trsmt_Data.bit_cnt) & 1;	// Читаем текущий бит
 		IR_TX_Set_Timer_ARR (act_bit ? NEC_BIT_ONE_SPACE : NEC_BIT_ZERO_SPACE);
 		IR_Trsmt_Data.mode = 4;	// Переход на: Пауза между битами
 		break;
-	case 4:	// Пауза между битами:
+	case 4:	// Пауза между битами закончилась:
 		IR_TX_OUT_Pin_ON;		// Включение выхода
 		IR_Trsmt_Data.bit_cnt --;	// Отсчёт битов
 		// Передача всех битов продолжается:

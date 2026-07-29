@@ -26,7 +26,7 @@
 #define IR_TRANSMITTER_EN			0	// Разрешение работы драйвера ИК-передатчика
 #endif
 #ifndef IR_TRASMIT_OUT_POLAR_MODE
-#define IR_TRASMIT_OUT_POLAR_MODE	0	// Режим полярности выхода: 0 - прямой выход, работа на ИК-светодиод, 1 - инвертированный выход
+#define IR_TRASMIT_OUT_POLAR_MODE	0	// Режим полярности выхода: 0 - прямой выход, 1 - инвертированный выход
 #endif
 #ifndef IR_TRASMIT_GPIO_DR_INIT_EN
 #define IR_TRASMIT_GPIO_DR_INIT_EN	0	// Инициализация выхода IR_TX_OUT драйвером
