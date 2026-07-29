@@ -172,11 +172,11 @@ void IR_Transmitter_Timer_IRQHandler (void)	// Обработчик прерыв
 			if (IR_Trsmt_Data.repeat_cnt)
 			{
 				IR_Trsmt_Data.repeat_cnt --;
-				if (IR_Trsmt_Data.repeat_cnt) IR_TX_Set_Lead_Pulse ();	// Начало генерации кода, установка стартового импульса (9 мс carrier)
+				if (IR_Trsmt_Data.repeat_cnt) IR_TX_Start_Frame ();	// Запуск нового кадра (стартовый импульс)
 				else IR_Transmitter_Stop ();	// Повторы закончились, остановка генерации кода
 			}
 			// Бесконечная отправка повторов:
-			else IR_TX_Set_Lead_Pulse ();	// Начало генерации кода, установка стартового импульса (9 мс carrier)
+			else IR_TX_Start_Frame ();	// Запуск нового кадра (стартовый импульс)
 		}
 		else IR_Transmitter_Stop ();	// Одиночный код закончен
 		break;
